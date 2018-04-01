@@ -6,6 +6,7 @@ import android.preference.PreferenceManager;
 public class ApplicationConfig {
     static final String KEY_TAG = "tag";
     static final String KEY_DEBUG = "debug_enabled";
+    static final String KEY_REQUESTING_LOCATION_UPDATES = "requesting_location_updates";
 
     public static boolean DEBUG = false;
     public static String TAG = "hl.tracker";
@@ -21,5 +22,19 @@ public class ApplicationConfig {
 
     public static void setDebug(Context context, boolean debug) {
         PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_DEBUG, debug).apply();
+    }
+
+    public static void setRequestingLocationUpdates(Context context, boolean requestingLocationUpdate) {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_REQUESTING_LOCATION_UPDATES, requestingLocationUpdate).apply();
+    }
+
+    /**
+     * Returns true if requesting location updates, otherwise returns false.
+     *
+     * @param context The {@link Context}.
+     */
+    static boolean requestingLocationUpdates(Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(KEY_REQUESTING_LOCATION_UPDATES, false);
     }
 }

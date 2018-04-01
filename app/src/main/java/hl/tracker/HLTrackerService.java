@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.location.Address;
 import android.location.Geocoder;
 import android.location.Location;
@@ -24,6 +25,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
@@ -133,256 +135,99 @@ public class HLTrackerService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // if we are currently trying to get a location and the alarm manager has called this again,
-        // no need to start processing a new location.
-        if (!currentlyProcessingLocation) {
-            currentlyProcessingLocation = true;
-            startTracking(intervalUpdate);
-        }
+        Logger.d("Service started");
 
+        boolean startedFromNotification = intent.getBooleanExtra(EXTRA_STARTED_FROM_NOTIFICATION, false);
+        if (startedFromNotification) {
+            removeLocationUpdates();
+            stopSelf();
+        }
         return START_NOT_STICKY;
     }
 
-    private void startTracking(long intervalTime) {
-        Logger.d( "startTracking");
-        //-- send old data
-        sendOldData();
-        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS) {
-            googleApiClient = new GoogleApiClient.Builder(this)
-                    .addApi(LocationServices.API)
-                    .addApi(ActivityRecognition.API)
-                    .addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this)
-                    .build();
-
-            if (!googleApiClient.isConnected() || !googleApiClient.isConnecting()) {
-                setupRequests(intervalTime);
-                googleApiClient.connect();
-            }
-        } else {
-            Log.e(TAG, "unable to connect to google play services.");
-        }
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        mChangingConfiguration = true;
     }
-
-    private void setupRequests(long intervalTime) {
-        if (intervalTime < DEFAULT_INTERVAL_LOCATION_UPDATE) {
-            intervalTime = DEFAULT_INTERVAL_LOCATION_UPDATE;
-        }
-        locationRequest = LocationRequest.create();
-        locationRequest.setInterval(intervalTime); // milliseconds
-        locationRequest.setFastestInterval(intervalTime/2); // the fastest rate in milliseconds at which your app can handle location updates
-        locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-    }
-
-    protected void sendOldData() {
-        final List<DataModel> dataList = DBTools.selectAllEventData();
-        if (dataList == null || dataList.size() == 0) {
-            return;
-        }
-        HttpClient.init(baseUrl).post(dataList, new Callback<Resp>() {
-            @Override
-            public void onResponse(Call<Resp> call, Response<Resp> response) {
-                //delete all events
-                //DBTools.deleteAllEventData();
-                for (DataModel dm : dataList) {
-                    DBTools.deleteEventData(dm.getTimestamp());
-                }
-            }
-
-            @Override
-            public void onFailure(Call<Resp> call, Throwable t) {
-                //noop
-            }
-        });
-    }
-
-    protected void postDataToServer(Location location) {
-        final DataModel data = new DataModel(StringTools.getDeviceId(getApplicationContext()));
-        data.updateLocation(location);
-        data.setBatteryLevel(mBatteryLevel);
-        data.setSatCount(10);
-        data.setSignalStrength(1.0f);
-        postDataToServer(data);
-    }
-
-    protected void postDataToServer(final DataModel data) {
-        HttpClient.init(baseUrl).post(data, new Callback<Resp>() {
-            @Override
-            public void onResponse(Call<Resp> call, Response<Resp> response) {
-                Resp resp = response.body();
-                switch (resp.getCode()) {
-                    case -1: //not yet added or malformed data
-                        //cancelAlarmManager();
-                        //restartAlarmManager(10); //check every 10 minutes
-                        stopLocationUpdates();
-                        stopSelf();
-                        break;
-                    case 401: //device was inactivated
-                        //restartAlarmManager(24*60); //check next day
-                        //cancelAlarmManager();
-                        stopLocationUpdates();
-                        stopSelf();
-                        break;
-                }
-            }
-
-            @Override
-            public void onFailure(Call<Resp> call, Throwable t) {
-                //store data to DB
-                DBTools.insertEventDataLimited(data, limitStorage);
-                FirebaseCrash.report(t);
-            }
-        });
-    }
-
 
     @Override
     public void onDestroy() {
         unregisterReceiver(mBatteryInfoReceiver);
-        stopLocationUpdates();
-        stopSelf(); //stop service
-        super.onDestroy();
+        mServiceHandler.removeCallbacksAndMessages(null);
     }
 
     @Override
     public IBinder onBind(Intent intent) {
-        return null;
+        // Called when a client  comes to the foreground and binds with this service. The service
+        // should cease to be a foreground service when that happends.
+        Logger.d("in onBind()");
+        stopForeground(true);
+        mChangingConfiguration = false;
+        return mBinder;
     }
 
     @Override
-    public void onLocationChanged(Location location) {
-        if (location != null) {
-            Log.e(TAG, "position: " + location.getLatitude() + ", " + location.getLongitude() + " accuracy: " + location.getAccuracy());
+    public void onRebind(Intent intent) {
+        // Called when a client returns to the foreground and binds once again with this service.
+        // The service should cease to be a foreground service when that happens.
+        Log.i(TAG, "in onRebind()");
+        stopForeground(true);
+        mChangingConfiguration = false;
+        super.onRebind(intent);
+    }
 
-            // we have our desired accuracy of 500 meters so lets quit this service,
-            // onDestroy will be called and stop our location uodates
-            if (location.getAccuracy() < 2000.0f) {
-                //stopLocationUpdates();
-                //postDataToServer(location);
-                geocoderAsyncTask = new GeocoderAsyncTask();
-                geocoderAsyncTask.execute(location);
+    @Override
+    public boolean onUnbind(Intent intent) {
+        Log.i(TAG, "Last client unbound from service");
+
+        // Called when the last client (MainActivity in case of this sample) unbinds from this
+        // service. If this method is called due to a configuration change in MainActivity, we
+        // do nothing. Otherwise, we make this service a foreground service.
+        if (!mChangingConfiguration && ApplicationConfig.requestingLocationUpdates(this)) {
+            Log.i(TAG, "Starting foreground service");
+            /*
+            // TODO(developer). If targeting O, use the following code.
+            if (Build.VERSION.SDK_INT == Build.VERSION_CODES.O) {
+                mNotificationManager.startServiceInForeground(new Intent(this,
+                        LocationUpdatesService.class), NOTIFICATION_ID, getNotification());
+            } else {
+                startForeground(NOTIFICATION_ID, getNotification());
             }
+             */
+            startForeground(ApplicationConfig.NOTIFICATION_ID, getNotification());
         }
+        return true; // Ensures onRebind() is called when a client re-binds.
     }
 
-    private void stopLocationUpdates() {
-        Log.i(TAG, "...stopLocationUpdates");
-        if (googleApiClient != null && googleApiClient.isConnected()) {
-            LocationServices.FusedLocationApi.removeLocationUpdates(googleApiClient, this);
-            googleApiClient.disconnect();
-        }
-    }
+
+    //--
 
     /**
-     * Called by Location Services when the request to connect the
-     * client finishes successfully. At this point, you can
-     * request the current location or start periodic updates
+     * Makes a request for location updates. Note that in this sample we merely log the
+     * {@link SecurityException}.
      */
-    @Override
-    public void onConnected(Bundle bundle) {
-        Logger.d( "onConnected");
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-            return;
+    public void requestLocationUpdates() {
+        Log.i(TAG, "Requesting location updates");
+        ApplicationConfig.setRequestingLocationUpdates(this, true);
+        startService(new Intent(getApplicationContext(), HLTrackerService.class));
+        try {
+            mFusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback, Looper.myLooper());
+        } catch (SecurityException unlikely) {
+            ApplicationConfig.setRequestingLocationUpdates(this, false);
+            Log.e(TAG, "Lost location permission. Could not request updates. " + unlikely);
         }
-        LocationServices.FusedLocationApi.requestLocationUpdates(googleApiClient, locationRequest, this);
-        //--
-        Intent intent = new Intent(this, DetectedActivityService.class );
-        PendingIntent pendingIntent = PendingIntent.getService(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
-        ActivityRecognition.ActivityRecognitionApi.requestActivityUpdates(googleApiClient, intervalUpdate, pendingIntent);
     }
 
-    @Override
-    public void onConnectionFailed(ConnectionResult connectionResult) {
-        Log.e(TAG, "onConnectionFailed");
-        stopLocationUpdates();
-        stopSelf(); //stop service
-    }
-
-    @Override
-    public void onConnectionSuspended(int i) {
-        Log.e(TAG, "GoogleApiClient connection has been suspend");
-        stopLocationUpdates();
-        stopSelf(); //stop service
-    }
-
-    // calculate batter level
-    private float calculateBatteryLevel(Intent battState) {
-        if (battState == null) return 0;
-        int level = battState.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-        int scale = battState.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-
-        return (level / (float) scale);
-    }
-
-    private void restartAlarmManager(int intervalInMinutes) {
-        Logger.d( "startAlarmManager");
-        Context context = getApplicationContext();
-        Intent gpsTrackerIntent = new Intent(context, GpsTrackerAlarmReceiver.class);
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(context, 0, gpsTrackerIntent, 0);
-        AlarmManager alarmManager = (AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
-        alarmManager.setRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime(),
-                intervalInMinutes * 60000, // 60000 = 1 minute
-                pendingIntent);
-    }
-    private void cancelAlarmManager() {
-        Logger.d( "cancelAlarmManager");
-
-        Context context = getBaseContext();
-        Intent gpsTrackerIntent = new Intent(context, GpsTrackerAlarmReceiver.class);
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(context, 0, gpsTrackerIntent, 0);
-        AlarmManager alarmManager = (AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
-        alarmManager.cancel(pendingIntent);
-    }
-
-    private class GeocoderAsyncTask extends AsyncTask<Location, Void, DataModel> {
-
-        @Override
-        protected DataModel doInBackground(Location... locations) {
-            List<Address> addresses = null;
-
-            try {
-                addresses = geocoder.getFromLocation(
-                        locations[0].getLatitude(),
-                        locations[0].getLongitude(),
-                        // In this sample, get just a single address.
-                        1);
-            } catch (IOException ioException) {
-                FirebaseCrash.report(ioException);
-            } catch (IllegalArgumentException illegalArgumentException) {
-                FirebaseCrash.report(illegalArgumentException);
-            }
-
-            // Handle case where no address was found.
-            if (addresses == null || addresses.size()  == 0) {
-
-            } else {
-                Address address = addresses.get(0);
-                ArrayList<String> addressFragments = new ArrayList<String>();
-                for(int i = 0; i < address.getMaxAddressLineIndex(); i++) {
-                    addressFragments.add(address.getAddressLine(i));
-                }
-                String strAddress =  TextUtils.join(System.getProperty("line.separator"), addressFragments);
-                DataModel dataModel = new DataModel(StringTools.getDeviceId(getApplicationContext()));
-                dataModel.updateLocation(locations[0]);
-                dataModel.setAddress(strAddress);
-                dataModel.setBatteryLevel(mBatteryLevel);
-                dataModel.setSatCount(10);
-                dataModel.setSignalStrength(1.0f);
-                return dataModel;
-            }
-            return null;
-        }
-        @Override
-        protected void onPostExecute(DataModel data) {
-            postDataToServer(data);
+    public void removeLocationUpdates() {
+        Logger.d("Removing location update");
+        try {
+            mFusedLocationClient.removeLocationUpdates(mLocationCallback);
+            ApplicationConfig.setRequestingLocationUpdates(this, false);
+            stopSelf();
+        } catch (SecurityException ex) {
+            ApplicationConfig.setRequestingLocationUpdates(this, true);
+            Logger.d("Lost location permission. Could not remove update." + ex);
         }
     }
 
@@ -426,6 +271,15 @@ public class HLTrackerService extends Service {
         if (serviceIsRunningInForeground(this)) {
             mNotificationManager.notify(ApplicationConfig.NOTIFICATION_ID, getNotification());
         }
+    }
+
+    // calculate batter level
+    private float calculateBatteryLevel(Intent battState) {
+        if (battState == null) return 0;
+        int level = battState.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = battState.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+
+        return (level / (float) scale);
     }
 
     private Notification getNotification() {
