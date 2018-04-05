@@ -63,4 +63,13 @@ public class HLUtils {
         }
         return key;
     }
+
+    public static String getTimestampString(long timestamp) {
+        if (timestamp > 9999999999L) {
+            return String.valueOf(timestamp).substring(11);
+        } else {
+            return String.valueOf(timestamp);
+        }
+
+    }
 }

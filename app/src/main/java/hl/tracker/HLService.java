@@ -270,11 +270,10 @@ public class HLService extends Service {
         LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
 
         // Update notification content if running as a foreground service
-        if (serviceIsRunningInForeground(this)) {
-            mNotificationManager.notify(AppConfig.NOTIFICATION_ID, getNotification());
-        }
-
-        DatabaseReference locRef = reference.child(location.getTime()/1000 + "");
+        //if (serviceIsRunningInForeground(this)) {
+        //    mNotificationManager.notify(AppConfig.NOTIFICATION_ID, getNotification());
+        //}
+        DatabaseReference locRef = reference.child(HLUtils.getTimestampString(location.getTime()));
         locRef.setValue(location);
     }
 

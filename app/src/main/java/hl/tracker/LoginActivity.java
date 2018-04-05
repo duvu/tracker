@@ -130,9 +130,9 @@ public class LoginActivity extends AppCompatActivity {
                             showProgress(false);
                             if (task.isSuccessful()) {
                                 Logger.d("[LoginActivity]:+success");
+                                moveToMain();
                             } else {
                                 Logger.d("[LogginActivity]:+failure " + task.getException().getMessage());
-
                             }
                         }
                     });
@@ -187,6 +187,12 @@ public class LoginActivity extends AppCompatActivity {
 
     private void moveToRegister() {
         Intent i = new Intent(LoginActivity.this, RegisterActivity.class);
+        startActivity(i);
+    }
+
+    private void moveToMain() {
+        Intent i = new Intent(LoginActivity.this, MainActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
         startActivity(i);
     }
 }
