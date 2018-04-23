@@ -22,7 +22,13 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.Toast;
 
+import com.evernote.android.job.JobManager;
+import com.evernote.android.job.JobRequest;
 import com.google.firebase.auth.FirebaseAuth;
+
+import hl.tracker.job.HLJob15;
+import hl.tracker.job.HLJob20;
+import hl.tracker.job.HLJob25;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -61,13 +67,18 @@ public class MainActivity extends AppCompatActivity {
 
         myReceiver = new MyReceiver();
         // Check that the user hasn't revoked permissions by going to Settings.
-        if (HLUtils.requestingLocationUpdates(this)) {
-            if (!checkPermissions()) {
-                requestPermissions();
-            }
+        if (!checkPermissions()) {
+            requestPermissions();
         }
 
-        startService(new Intent(MainActivity.this, HLService.class));
+        //startService(new Intent(MainActivity.this, HLService.class));
+
+        JobManager.instance().cancelAll();
+        new JobRequest.Builder(HLJob15.TAG).startNow().build().scheduleAsync();
+
+        HLJob15.schedule();
+        HLJob20.schedule();
+        HLJob25.schedule();
     }
 
     @Override
