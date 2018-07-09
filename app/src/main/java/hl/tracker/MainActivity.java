@@ -3,6 +3,7 @@ package hl.tracker;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
@@ -11,15 +12,17 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.support.v4.content.ContextCompat;
 import android.support.v4.content.LocalBroadcastManager;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.text.SpannableString;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
 import android.widget.TextView;
-import android.widget.Toast;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -29,7 +32,7 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView txtLocation;
     private TextView txtAddress;
-
+    LayoutInflater inflater;
 
     // The BroadcastReceiver used to listen from broadcasts from the service.
     private MyReceiver myReceiver;
@@ -72,6 +75,8 @@ public class MainActivity extends AppCompatActivity {
 
         txtLocation = (TextView) findViewById(R.id.current_location);
         txtAddress = (TextView) findViewById(R.id.current_address);
+
+        inflater = this.getLayoutInflater();
     }
 
     @Override
@@ -109,14 +114,38 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+
+
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
+        switch (item.getItemId()) {
+            case R.id.action_set_period:
+                //show a dialog
+                AlertDialog dialog = new AlertDialog.Builder(this)
+                        .setTitle(R.string.action_set_period)
+                        .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
 
-        //noinspection SimplifiableIfStatement
+                            }
+                        })
+                        .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+
+                            }
+                        }).create();
+
+                View view = inflater.inflate(R.layout.dialog_set_period, null);
+                dialog.setView(view);
+
+                dialog.show();
+                return true;
+            case R.id.action_set_pin:
+                return true;
+            case R.id.action_shutdown:
+                return true;
+        }
         return super.onOptionsItemSelected(item);
     }
 

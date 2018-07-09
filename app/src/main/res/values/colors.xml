@@ -6,8 +6,8 @@
     <color name="colorAccent">#afb42b</color>
     <color name="colorTextWarn">#fc0303</color>
 
-    <color name="colorTextPrimary">#f0f4c3</color>
-    <color name="colorTextPrimaryDark">#f0f4c3</color>
-    <color name="colorTextAccent">#f0f4c3</color>
+    <color name="colorTextPrimary">#687669</color>
+    <color name="colorTextPrimaryDark">#687669</color>
+    <color name="colorTextAccent">#687669</color>
     <color name="black_overlay">#66000000</color>
 </resources>

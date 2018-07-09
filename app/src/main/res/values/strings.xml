@@ -23,7 +23,7 @@
     <string name="action_back_sign_in">Back sign in</string>
     <string name="prompt_name">Full Name</string>
     <string name="prompt_phone">Phone Number</string>
-    <string name="action_logout">Logout</string>
+    <string name="action_shutdown">Stop Tracking</string>
     <string name="onest">1.</string>
     <string name="gotowebsite">Goto website panel.mijntrack.be and login</string>
     <string name="twond">2.</string>
@@ -35,4 +35,7 @@
     <string name="current_location">Current Location:</string>
     <string name="fifth">5.</string>
     <string name="current_address">Current Address</string>
+    <string name="action_set_pin">Set PIN</string>
+    <string name="action_set_period">Set Interval</string>
+    <string name="cancel">Cancel</string>
 </resources>
