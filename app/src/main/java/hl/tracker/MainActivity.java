@@ -1,42 +1,35 @@
 package hl.tracker;
 
-import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
 import android.location.Location;
+import android.os.Bundle;
 import android.os.IBinder;
-import android.support.design.widget.Snackbar;
-import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.support.v7.widget.Toolbar;
-import android.util.Log;
+import android.text.SpannableString;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.view.View;
+import android.widget.TextView;
 import android.widget.Toast;
 
-import com.evernote.android.job.JobManager;
-import com.evernote.android.job.JobRequest;
-import com.google.firebase.auth.FirebaseAuth;
-
-import hl.tracker.job.HLJob15;
-import hl.tracker.job.HLJob20;
-import hl.tracker.job.HLJob25;
 
 public class MainActivity extends AppCompatActivity {
 
     private HLService mService;
     private boolean mBound = false;
 
-    // Used in checking for runtime permissions.
-    private static final int REQUEST_PERMISSIONS_REQUEST_CODE = 34;
+    private TextView txtLocation;
+    private TextView txtAddress;
+
 
     // The BroadcastReceiver used to listen from broadcasts from the service.
     private MyReceiver myReceiver;
@@ -67,24 +60,27 @@ public class MainActivity extends AppCompatActivity {
 
         myReceiver = new MyReceiver();
         // Check that the user hasn't revoked permissions by going to Settings.
-        if (!checkPermissions()) {
-            requestPermissions();
-        }
 
-        //startService(new Intent(MainActivity.this, HLService.class));
+        TextView instruction2 = (TextView) findViewById(R.id.instruction2);
+        String txtStr = getString(R.string.using_this_imei) + " " + NetworkUtils.getGatewayId() + " " + getString(R.string.to_create_a_new_device);
 
-        JobManager.instance().cancelAll();
-        new JobRequest.Builder(HLJob15.TAG).startNow().build().scheduleAsync();
+        SpannableString txt = new SpannableString(txtStr);
+        txt.setSpan(new ForegroundColorSpan(ContextCompat.getColor(this, R.color.colorTextWarn)), 0, txtStr.length(), 0);
+        txt.setSpan(new ForegroundColorSpan(ContextCompat.getColor(this, R.color.colorPrimaryDark)), 17, 32, 0);
+        instruction2.setText(txt, TextView.BufferType.SPANNABLE);
 
-        HLJob15.schedule();
-        HLJob20.schedule();
-        HLJob25.schedule();
+
+        txtLocation = (TextView) findViewById(R.id.current_location);
+        txtAddress = (TextView) findViewById(R.id.current_address);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         bindService(new Intent(this, HLService.class), mConnection, BIND_AUTO_CREATE);
+        mBound = true;
+
+        makeServiceRunning();
     }
 
     @Override
@@ -121,58 +117,16 @@ public class MainActivity extends AppCompatActivity {
         int id = item.getItemId();
 
         //noinspection SimplifiableIfStatement
-        if (id == R.id.action_logout) {
-            //SharedPref.clear();
-            FirebaseAuth.getInstance().signOut();
-            mService.stopSelf();
-            Intent intent = new Intent(MainActivity.this, LoginActivity.class);
-            intent.setFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
-            startActivity(intent);
-            return true;
-        }
         return super.onOptionsItemSelected(item);
     }
 
-    /**
-     * Returns the current state of the permissions needed.
-     */
-    private boolean checkPermissions() {
-        return  PackageManager.PERMISSION_GRANTED == ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION);
+
+
+    private void makeServiceRunning() {
+        Intent intent1 = new Intent(MainActivity.this, HLService.class);
+        startService(intent1);
     }
 
-    private void requestPermissions() {
-        boolean shouldProvideRationale =
-                ActivityCompat.shouldShowRequestPermissionRationale(this,
-                        Manifest.permission.ACCESS_FINE_LOCATION);
-
-        // Provide an additional rationale to the user. This would happen if the user denied the
-        // request previously, but didn't check the "Don't ask again" checkbox.
-        if (shouldProvideRationale) {
-            Log.i(AppConfig.TAG, "Displaying permission rationale to provide additional context.");
-            Snackbar.make(
-                    findViewById(R.id.activity_main),
-                    R.string.permission_rationale,
-                    Snackbar.LENGTH_INDEFINITE)
-                    .setAction(R.string.ok, new View.OnClickListener() {
-                        @Override
-                        public void onClick(View view) {
-                            // Request permission
-                            ActivityCompat.requestPermissions(MainActivity.this,
-                                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                                    REQUEST_PERMISSIONS_REQUEST_CODE);
-                        }
-                    })
-                    .show();
-        } else {
-            Log.i(AppConfig.TAG, "Requesting permission");
-            // Request permission. It's possible this can be auto answered if device policy
-            // sets the permission in a given state or the user denied the permission
-            // previously and checked "Never ask again".
-            ActivityCompat.requestPermissions(MainActivity.this,
-                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                    REQUEST_PERMISSIONS_REQUEST_CODE);
-        }
-    }
     /**
      * Receiver for broadcasts sent by {@link HLService}.
      */
@@ -180,9 +134,12 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             Location location = intent.getParcelableExtra(HLService.EXTRA_LOCATION);
+            String address = intent.getStringExtra(HLService.EXTRA_ADDRESS);
             if (location != null) {
-                Toast.makeText(MainActivity.this, HLUtils.getLocationText(location),
-                        Toast.LENGTH_SHORT).show();
+                txtLocation.setText(HLUtils.getLocationText(location));
+            }
+            if (!TextUtils.isEmpty(address)) {
+                txtAddress.setText(address);
             }
         }
     }

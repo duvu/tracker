@@ -1,11 +1,8 @@
 package hl.tracker;
 
 import android.app.Application;
-
-import com.evernote.android.job.JobManager;
-
 import hl.tracker.box.MyObjectBox;
-import hl.tracker.job.HLJobCreator;
+
 import io.objectbox.BoxStore;
 
 public class App extends Application {
@@ -16,8 +13,8 @@ public class App extends Application {
     public void onCreate() {
         super.onCreate();
         //start Android-job
-        JobManager.create(this).addJobCreator(new HLJobCreator());
         boxStore = MyObjectBox.builder().androidContext(App.this).build();
+        NetworkUtils.init(this);
     }
 
     public BoxStore getBoxStore() {

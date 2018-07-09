@@ -1,6 +1,8 @@
 package hl.tracker;
 
+import android.annotation.TargetApi;
 import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -11,6 +13,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
+import android.hardware.GeomagneticField;
+import android.location.Address;
 import android.location.Geocoder;
 import android.location.Location;
 import android.os.BatteryManager;
@@ -20,7 +24,10 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
+import android.support.annotation.RequiresApi;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
@@ -32,14 +39,16 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
-import com.google.firebase.auth.FirebaseAuth;
-import com.google.firebase.auth.FirebaseUser;
-import com.google.firebase.database.DatabaseReference;
-import com.google.firebase.database.FirebaseDatabase;
 
+import java.io.IOException;
+import java.util.List;
 import java.util.Locale;
 
-//import com.google.android.gms.common.GooglePlayServicesUtil;
+import hl.tracker.box.EventData;
+import io.objectbox.Box;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.Response;
 
 public class HLService extends Service {
 
@@ -48,11 +57,10 @@ public class HLService extends Service {
     private static final String CHANNEL_ID                          = "channel_01";
     static final String ACTION_BROADCAST                            = PACKAGE_NAME + ".broadcast";
     static final String EXTRA_LOCATION                              = PACKAGE_NAME + ".location";
+    static final String EXTRA_ADDRESS                              = PACKAGE_NAME + ".address";
     private static final String EXTRA_STARTED_FROM_NOTIFICATION     = PACKAGE_NAME + ".started_from_notification";
 
     private final IBinder mBinder = new LocalBinder();
-
-    private boolean mChangingConfiguration = false;
     private NotificationManager mNotificationManager;
 
     private LocationRequest mLocationRequest;
@@ -60,18 +68,16 @@ public class HLService extends Service {
     private LocationCallback mLocationCallback;
     private Handler mServiceHandler;
 
+    AlarmManager nextPointAlarmManager;
+
     private Geocoder mGeocoder;
+    private Box<EventData> eventBox;
 
     //-- current location
     private Location mLocation;
 
     //-- current battery-level
-    private float mBatteryLevel = 0.0f;
-
-    //FirebaseDatabase
-    FirebaseDatabase database;// = FirebaseDatabase.getInstance();
-    DatabaseReference reference;
-
+    private Double mBatteryLevel = 0d;
 
     //BatteryReceiver
     private BroadcastReceiver mBatteryInfoReceiver = new BroadcastReceiver() {
@@ -80,6 +86,29 @@ public class HLService extends Service {
             mBatteryLevel = calculateBatteryLevel(intent);
         }
     };
+
+    //----------------------------------------------------------------------------------------------
+    private Runnable stopManagerRunable = new Runnable() {
+        @Override
+        public void run() {
+            Logger.d("[>_] Absolute timeout reached");
+            stopManagerAndResetAlarm();
+        }
+    };
+
+    private void startAbsoluteTimer() {
+        mServiceHandler.postDelayed(stopManagerRunable, 30000);
+    }
+    private void stopAbsoluteTimer() {
+        mServiceHandler.removeCallbacks(stopManagerRunable);
+    }
+
+    private void stopManagerAndResetAlarm() {
+        removeLocationUpdates();
+        stopAbsoluteTimer();
+        setAlarmForNextPoint();
+    }
+    //----------------------------------------------------------------------------------------------
 
     public HLService() { }
 
@@ -90,22 +119,9 @@ public class HLService extends Service {
         IntentFilter batteryChangedFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
         registerReceiver(mBatteryInfoReceiver, batteryChangedFilter);
 
+        nextPointAlarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+
         mGeocoder = new Geocoder(this, Locale.getDefault());
-        database = FirebaseDatabase.getInstance();
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-
-        if (currentUser == null) {
-            mServiceHandler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    stopSelf();
-                }
-            }, 10000);
-        }
-
-        String uuid = currentUser == null ? "unknown_user" : currentUser.getUid();
-        reference = database.getReference(uuid);
-
         if (HLUtils.isGooglePlayServicesAvailable(this)) {
             mFusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
             mLocationCallback = new LocationCallback() {
@@ -128,37 +144,34 @@ public class HLService extends Service {
         // Android O requires a notification channel
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             CharSequence name = getString(R.string.app_name);
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, name, NotificationManager.IMPORTANCE_DEFAULT);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, name, NotificationManager.IMPORTANCE_NONE);
             // set the notification channel for notification-manager
             mNotificationManager.createNotificationChannel(channel);
         }
+
+        eventBox = ((App) getApplicationContext()).getBoxStore().boxFor(EventData.class);
+        startForeground(AppConfig.NOTIFICATION_ID, getNotification());
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Logger.d("Service started1");
-
-        boolean startedFromNotification = intent.getBooleanExtra(EXTRA_STARTED_FROM_NOTIFICATION, false);
-        if (startedFromNotification) {
-            removeLocationUpdates();
-            stopSelf();
-        }
+        Logger.d("Service started");
 
         requestUpdateData();
-
+        startAbsoluteTimer();
         return START_NOT_STICKY;
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        mChangingConfiguration = true;
     }
 
     @Override
     public void onDestroy() {
         unregisterReceiver(mBatteryInfoReceiver);
         mServiceHandler.removeCallbacksAndMessages(null);
+        stopForeground(true);
         super.onDestroy();
     }
 
@@ -167,8 +180,7 @@ public class HLService extends Service {
         // Called when a client  comes to the foreground and binds with this service. The service
         // should cease to be a foreground service when that happends.
         Logger.d("in onBind()");
-        stopForeground(true);
-        mChangingConfiguration = false;
+        //stopForeground(true);
         return mBinder;
     }
 
@@ -177,30 +189,21 @@ public class HLService extends Service {
         // Called when a client returns to the foreground and binds once again with this service.
         // The service should cease to be a foreground service when that happens.
         Log.i(TAG, "in onRebind()");
-        stopForeground(true);
-        mChangingConfiguration = false;
+        //stopForeground(true);
         super.onRebind(intent);
     }
 
     @Override
     public boolean onUnbind(Intent intent) {
         Log.i(TAG, "Last client unbound from service");
-
-        // Called when the last client (MainActivity in case of this sample) unbinds from this
-        // service. If this method is called due to a configuration change in MainActivity, we
-        // do nothing. Otherwise, we make this service a foreground service.
-        if (!mChangingConfiguration && HLUtils.requestingLocationUpdates(this)) {
-            startForeground(AppConfig.NOTIFICATION_ID, getNotification());
-        }
+        //startForeground(AppConfig.NOTIFICATION_ID, getNotification());
         return true; // Ensures onRebind() is called when a client re-binds.
     }
 
 
     //--
     private void requestUpdateData() {
-        Logger.d("[starting scan ble and location] ...");
-
-        HLUtils.setRequestingLocationUpdates(this, true);
+        Logger.d("[starting location] ...");
         requestLocationUpdates();
 
         //startAbsoluteTimer();
@@ -211,11 +214,9 @@ public class HLService extends Service {
      */
     public void requestLocationUpdates() {
         Log.i(TAG, "Requesting location updates");
-        HLUtils.setRequestingLocationUpdates(this, true);
         try {
             mFusedLocationClient.requestLocationUpdates(mLocationRequest, mLocationCallback, Looper.myLooper());
         } catch (SecurityException unlikely) {
-            HLUtils.setRequestingLocationUpdates(this, false);
             Log.e(TAG, "Lost location permission. Could not request updates. " + unlikely);
         }
     }
@@ -224,10 +225,7 @@ public class HLService extends Service {
         Logger.d("Removing location update");
         try {
             mFusedLocationClient.removeLocationUpdates(mLocationCallback);
-            HLUtils.setRequestingLocationUpdates(this, false);
-            stopSelf();
         } catch (SecurityException ex) {
-            HLUtils.setRequestingLocationUpdates(this, true);
             Logger.d("Lost location permission. Could not remove update." + ex);
         }
     }
@@ -262,62 +260,102 @@ public class HLService extends Service {
     }
 
     private void onNewLocation(Location location) {
-        Logger.d("New Location: " + location);
         mLocation = location;
-        // notify anyone listening for broadcasts about the new location.
         Intent intent = new Intent(ACTION_BROADCAST);
         intent.putExtra(EXTRA_LOCATION, location);
+        final EventData evdt = new EventData();
+
+        try {
+            List<Address> addresses = mGeocoder.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
+            evdt.setAddress(addresses.get(0).getAddressLine(0));
+            intent.putExtra(EXTRA_ADDRESS, addresses.get(0).getAddressLine(0));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
         LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
 
-        // Update notification content if running as a foreground service
-        //if (serviceIsRunningInForeground(this)) {
-        //    mNotificationManager.notify(AppConfig.NOTIFICATION_ID, getNotification());
-        //}
-        DatabaseReference locRef = reference.child(HLUtils.getTimestampString(location.getTime()));
-        locRef.setValue(location);
+        evdt.setDeviceId(NetworkUtils.getGatewayId());
+        evdt.setLatitude(location.getLatitude());
+        evdt.setLongitude(location.getLongitude());
+        evdt.setAltitude(location.getAltitude());
+        evdt.setHeading(Float.valueOf(location.getBearing()).doubleValue());
+        evdt.setSpeedKph((double)location.getSpeed());
+        evdt.setBatteryLevel(mBatteryLevel);
+        evdt.setStatusCode(0);
+        evdt.setTimestamp(location.getTime()/1000);
+        WebService.postData(evdt, new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                //save to database
+                Logger.e("[>_] failed", e);
+                saveToDB(evdt);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                //check if have old events in database and send
+                pushOldData();
+            }
+        });
+
+        stopManagerAndResetAlarm();
+    }
+
+    private void saveToDB(EventData evdt) {
+        eventBox.put(evdt);
+    }
+
+    private void pushOldData() {
+        List<EventData> evdtList = eventBox.getAll();
+        for (final EventData evdt : evdtList) {
+            WebService.postData(evdt, new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    //noop
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    eventBox.remove(evdt);
+                }
+            });
+        }
     }
 
     // calculate batter level
-    private float calculateBatteryLevel(Intent battState) {
-        if (battState == null) return 0;
+    private Double calculateBatteryLevel(Intent battState) {
+        if (battState == null) return 0.0;
         int level = battState.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = battState.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
 
-        return (level / (float) scale);
+        return ((double)level / (double)scale);
     }
 
     private Notification getNotification() {
-        Intent intent = new Intent(this, HLService.class);
-        CharSequence text = HLUtils.getLocationText(mLocation);
 
-        // extra to help figure out if we arrived in onStartCommand via notification or not
-        intent.putExtra(EXTRA_STARTED_FROM_NOTIFICATION, true);
-
-        // the PendingIntent that leads to a call to onStartCommand() in this service
-        PendingIntent servicePendingIntent = PendingIntent.getService(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT);
-
-        // The PendingIntent to launch activity
+        Logger.d("[>_] getNotification() ...");
         PendingIntent activityPendingIntent = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), 0);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this)
+        String text = getString(R.string.app_name);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .addAction(R.drawable.ic_launch, getString(R.string.launch_activity), activityPendingIntent)
-                .addAction(R.drawable.ic_cancel, getString(R.string.remove_location_updates), servicePendingIntent)
+                //.addAction(R.drawable.ic_cancel, getString(R.string.remove_location_updates), servicePendingIntent)
                 .setContentText(text)
-                .setContentTitle(HLUtils.getLocationTitle(this))
+                .setContentTitle("GpsTracker")
                 .setOngoing(true)
                 .setSmallIcon(R.drawable.notification)
-                .setTicker(text)
                 .setWhen(System.currentTimeMillis());
 
-        // set the Channel ID for Android O
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            builder.setPriority(Notification.PRIORITY_HIGH);
+            builder.setPriority(Notification.PRIORITY_MIN);
         }
 
         // set the Channel ID for Android O
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setChannelId(CHANNEL_ID);
-        }
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//            builder.setChannelId(CHANNEL_ID);
+//        }
         return builder.build();
     }
 
@@ -327,19 +365,39 @@ public class HLService extends Service {
         }
     }
 
-    /**
-     * Returns true if this is a foreground service
-     * @param context The {@link Context}
-     */
-    public boolean serviceIsRunningInForeground(Context context) {
-        ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        for (ActivityManager.RunningServiceInfo serviceInfo: manager.getRunningServices(Integer.MAX_VALUE)) {
-            if (getClass().getName().equals(serviceInfo.service.getClassName())) {
-                if (serviceInfo.foreground) {
-                    return true;
-                }
-            }
+    @TargetApi(23)
+    private void setAlarmForNextPoint() {
+        Logger.d("[>_] Set alarm in: 10 seconds");
+
+        Intent i = new Intent(this, HLService.class);
+        PendingIntent pi = PendingIntent.getService(this, 0, i, 0);
+        nextPointAlarmManager.cancel(pi);
+
+        if(isDozing(this)){
+            //Only invoked once per 15 minutes in doze mode
+            Logger.d("Device is dozing, using infrequent alarm");
+            nextPointAlarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 30000, pi);
         }
-        return false;
+        else {
+            nextPointAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 30000, pi);
+        }
     }
+
+    /**
+     * Returns true if the device is in Doze/Idle mode. Should be called before checking the network connection because
+     * the ConnectionManager may report the device is connected when it isn't during Idle mode.
+     * https://github.com/yigit/android-priority-jobqueue/blob/master/jobqueue/src/main/java/com/path/android/jobqueue/network/NetworkUtilImpl.java#L60
+     */
+    @TargetApi(23)
+    public static boolean isDozing(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            return powerManager.isDeviceIdleMode() &&
+                    !powerManager.isIgnoringBatteryOptimizations(context.getPackageName());
+        } else {
+            return false;
+        }
+    }
+
+
 }
