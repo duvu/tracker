@@ -1,7 +1,6 @@
 package hl.tracker;
 
 import android.annotation.TargetApi;
-import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -12,8 +11,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
-import android.hardware.GeomagneticField;
 import android.location.Address;
 import android.location.Geocoder;
 import android.location.Location;
@@ -26,8 +25,8 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
-import android.support.annotation.RequiresApi;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
@@ -50,14 +49,15 @@ import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.Response;
 
-public class HLService extends Service {
+public class HLService extends Service implements SharedPreferences.OnSharedPreferenceChangeListener {
 
     private static final String PACKAGE_NAME                        = "hl.tracker";
     private static final String TAG                                 = HLService.class.getSimpleName();
     private static final String CHANNEL_ID                          = "channel_01";
-    static final String ACTION_BROADCAST                            = PACKAGE_NAME + ".broadcast";
-    static final String EXTRA_LOCATION                              = PACKAGE_NAME + ".location";
-    static final String EXTRA_ADDRESS                              = PACKAGE_NAME + ".address";
+    static final String ACTION_BROADCAST = PACKAGE_NAME + ".broadcast";
+    static final String EXTRA_LOCATION                              = PACKAGE_NAME + ".extra.location";
+    static final String EXTRA_INTERVAL                              = PACKAGE_NAME + ".extra.interval";
+    static final String EXTRA_ADDRESS                              = PACKAGE_NAME + ".extra.address";
     private static final String EXTRA_STARTED_FROM_NOTIFICATION     = PACKAGE_NAME + ".started_from_notification";
 
     private final IBinder mBinder = new LocalBinder();
@@ -69,6 +69,7 @@ public class HLService extends Service {
     private Handler mServiceHandler;
 
     AlarmManager nextPointAlarmManager;
+    private Long mInterval;
 
     private Geocoder mGeocoder;
     private Box<EventData> eventBox;
@@ -150,6 +151,9 @@ public class HLService extends Service {
         }
 
         eventBox = ((App) getApplicationContext()).getBoxStore().boxFor(EventData.class);
+        PreferenceManager.getDefaultSharedPreferences(this).registerOnSharedPreferenceChangeListener(this);
+        mInterval = SharedRef.getInterval();
+
         startForeground(AppConfig.NOTIFICATION_ID, getNotification());
     }
 
@@ -333,12 +337,9 @@ public class HLService extends Service {
     }
 
     private Notification getNotification() {
-
-        Logger.d("[>_] getNotification() ...");
         PendingIntent activityPendingIntent = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), 0);
 
         String text = getString(R.string.app_name);
-
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .addAction(R.drawable.ic_launch, getString(R.string.launch_activity), activityPendingIntent)
                 //.addAction(R.drawable.ic_cancel, getString(R.string.remove_location_updates), servicePendingIntent)
@@ -351,12 +352,15 @@ public class HLService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
             builder.setPriority(Notification.PRIORITY_MIN);
         }
-
-        // set the Channel ID for Android O
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-//            builder.setChannelId(CHANNEL_ID);
-//        }
         return builder.build();
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if (key.equalsIgnoreCase(SharedRef.KEY_INTERVAL)) {
+            mInterval = SharedRef.getInterval();
+            setAlarmForNextPoint();
+        }
     }
 
     public class LocalBinder extends Binder {
@@ -367,7 +371,10 @@ public class HLService extends Service {
 
     @TargetApi(23)
     private void setAlarmForNextPoint() {
-        Logger.d("[>_] Set alarm in: 10 seconds");
+        Logger.d("[>_] Set alarm in: "+ mInterval +" seconds");
+        Intent intent = new Intent(ACTION_BROADCAST);
+        intent.putExtra(EXTRA_INTERVAL, mInterval);
+        LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
 
         Intent i = new Intent(this, HLService.class);
         PendingIntent pi = PendingIntent.getService(this, 0, i, 0);
@@ -376,10 +383,10 @@ public class HLService extends Service {
         if(isDozing(this)){
             //Only invoked once per 15 minutes in doze mode
             Logger.d("Device is dozing, using infrequent alarm");
-            nextPointAlarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 30000, pi);
+            nextPointAlarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + mInterval*1000, pi);
         }
         else {
-            nextPointAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 30000, pi);
+            nextPointAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + mInterval*1000, pi);
         }
     }
 

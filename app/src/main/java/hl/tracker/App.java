@@ -15,6 +15,7 @@ public class App extends Application {
         //start Android-job
         boxStore = MyObjectBox.builder().androidContext(App.this).build();
         NetworkUtils.init(this);
+        SharedRef.init(this);
     }
 
     public BoxStore getBoxStore() {

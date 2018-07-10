@@ -10,6 +10,7 @@ import android.support.annotation.NonNull;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 
@@ -48,7 +49,7 @@ public class SplashActivity extends AppCompatActivity {
         if (!checkPermissions()) {
             requestPermissions();
         } else {
-            moveToMain();
+            move();
         }
     }
 
@@ -93,10 +94,18 @@ public class SplashActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         switch (requestCode) {
             case REQUEST_PERMISSIONS_REQUEST_CODE:
-                moveToMain();
+                move();
                 break;
             default:
                 finish();
+        }
+    }
+
+    private void move() {
+        if (TextUtils.isEmpty(SharedRef.getPin())) {
+            moveToMain();
+        } else {
+            moveToLogin();
         }
     }
 
@@ -104,6 +113,13 @@ public class SplashActivity extends AppCompatActivity {
         Intent i = new Intent(SplashActivity.this, MainActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
         startActivity(i);
+        finish();
+    }
+
+    private void moveToLogin() {
+        Intent intent = new Intent(SplashActivity.this, LoginActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
+        startActivity(intent);
         finish();
     }
 }

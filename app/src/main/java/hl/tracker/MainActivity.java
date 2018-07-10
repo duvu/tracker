@@ -22,7 +22,9 @@ import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -120,30 +122,54 @@ public class MainActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
             case R.id.action_set_period:
+                View view = inflater.inflate(R.layout.dialog_set_period, null, false);
+                final EditText edtInterval = view.findViewById(R.id.edt_interval);
+                edtInterval.setText(String.valueOf(SharedRef.getInterval()));
                 //show a dialog
-                AlertDialog dialog = new AlertDialog.Builder(this)
+                new AlertDialog.Builder(this)
                         .setTitle(R.string.action_set_period)
                         .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-
+                                Long interval = Long.parseLong(edtInterval.getText().toString());
+                                SharedRef.setInterval(interval);
                             }
                         })
                         .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
-
+                                //noop
                             }
-                        }).create();
-
-                View view = inflater.inflate(R.layout.dialog_set_period, null);
-                dialog.setView(view);
-
-                dialog.show();
+                        })
+                        .setView(view)
+                        .show();
                 return true;
             case R.id.action_set_pin:
+                View view1 = inflater.inflate(R.layout.dialog_set_pin, null,false);
+                final EditText edtPin = view1.findViewById(R.id.edt_pincode);
+                edtPin.setText(SharedRef.getPin());
+
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.action_set_pin)
+                        .setPositiveButton(R.string.ok, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                SharedRef.setPin(edtPin.getText().toString());
+                            }
+                        })
+                        .setNegativeButton(R.string.cancel, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                //noop
+                            }
+                        })
+                        .setView(view1)
+                        .show();
+
                 return true;
             case R.id.action_shutdown:
+                mService.stopForeground(true);
+                finish();
                 return true;
         }
         return super.onOptionsItemSelected(item);
@@ -164,11 +190,16 @@ public class MainActivity extends AppCompatActivity {
         public void onReceive(Context context, Intent intent) {
             Location location = intent.getParcelableExtra(HLService.EXTRA_LOCATION);
             String address = intent.getStringExtra(HLService.EXTRA_ADDRESS);
+            Long interval = intent.getLongExtra(HLService.EXTRA_INTERVAL, 0);
             if (location != null) {
                 txtLocation.setText(HLUtils.getLocationText(location));
             }
             if (!TextUtils.isEmpty(address)) {
                 txtAddress.setText(address);
+            }
+
+            if (interval > 0) {
+                Toast.makeText(MainActivity.this, "Going to fix location in " + interval + " seconds", Toast.LENGTH_SHORT).show();
             }
         }
     }

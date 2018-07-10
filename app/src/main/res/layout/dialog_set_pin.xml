@@ -7,10 +7,9 @@
     android:layout_height="match_parent">
 
     <EditText
-        android:id="@+id/edt_interval"
-        android:inputType="number"
+        android:id="@+id/edt_pincode"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        tools:ignore="LabelFor" />
-
+        tools:ignore="LabelFor"
+        android:inputType="textPassword" />
 </LinearLayout>
